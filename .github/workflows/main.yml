@@ -1,0 +1,24 @@
+name: DeployIQ Test Pipeline
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      DEPLOY_ENV:
+        description: 'Deployment environment'
+        default: 'staging'
+      branch:
+        description: 'Branch to deploy'
+        default: 'main'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Deploy
+        run: |
+          echo "🚀 DeployIQ Pipeline Test"
+          echo "Environment: ${{ github.event.inputs.DEPLOY_ENV }}"
+          echo "Branch: ${{ github.event.inputs.branch }}"
+          echo "✅ Deployment successful!"
