@@ -73,8 +73,11 @@ pipeline {
         echo "=============================="
         sh '''
           echo "--- Secret detection ---"
-          SECRETS=$(grep -rEi "(password|secret|token|api_key)\s*[:=]\s*['\"][^'\"]{6,}" app/ 2>/dev/null | wc -l)
-          [ "$SECRETS" -eq 0 ] && echo "✅ No hardcoded secrets found" || echo "⚠️  $SECRETS potential secrets found!"
+          if grep -rEi "password=|secret=|token=|api_key=" app/ 2>/dev/null; then
+            echo "WARNING: Potential secrets found!"
+          else
+            echo "OK: No hardcoded secrets found"
+          fi
 
           echo ""
           echo "--- File sizes ---"
