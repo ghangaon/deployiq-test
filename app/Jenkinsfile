@@ -20,7 +20,7 @@ pipeline {
       steps {
         echo "=== STAGE 2: BUILD DOCKER IMAGE ==="
         sh """
-          docker build -t ${IMAGE}:${BUILD_NUMBER} .
+          docker build -t ${IMAGE}:${BUILD_NUMBER} app/
           docker tag ${IMAGE}:${BUILD_NUMBER} ${IMAGE}:latest
           docker images | grep deployiq-app
           echo "Built: ${IMAGE}:${BUILD_NUMBER}"
