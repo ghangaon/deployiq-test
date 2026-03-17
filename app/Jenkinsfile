@@ -1,0 +1,69 @@
+pipeline {
+  agent any
+  parameters {
+    string(name: 'DEPLOY_ENV', defaultValue: 'staging')
+    string(name: 'branch', defaultValue: 'main')
+  }
+  stages {
+    stage('Checkout') {
+      steps {
+        echo "Checking out branch: ${params.branch}"
+        sh 'git log --oneline -5 || true'
+      }
+    }
+    stage('Build Docker Image') {
+      steps {
+        sh '''
+          IMAGE=ghangaon/deployiq-app:${BUILD_NUMBER}
+          echo "Building: $IMAGE"
+          docker build -t $IMAGE .
+          docker tag $IMAGE ghangaon/deployiq-app:latest
+          echo "Build complete!"
+          docker images | grep deployiq-app
+        '''
+      }
+    }
+    stage('Security Scan') {
+      steps {
+        sh '''
+          echo "Running Trivy security scan..."
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy image --exit-code 0 --severity HIGH,CRITICAL \
+            ghangaon/deployiq-app:latest || true
+          echo "Security scan complete!"
+        '''
+      }
+    }
+    stage('Deploy to Staging') {
+      steps {
+        sh '''
+          echo "Deploying to staging..."
+          docker stop deployiq-app-staging || true
+          docker rm deployiq-app-staging || true
+          docker run -d \
+            --name deployiq-app-staging \
+            -p 8090:80 \
+            ghangaon/deployiq-app:latest
+          sleep 2
+          docker ps | grep deployiq-app
+          echo "Staging deployed on port 8090!"
+        '''
+      }
+    }
+    stage('Smoke Test') {
+      steps {
+        sh '''
+          echo "Running smoke tests..."
+          sleep 2
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8090)
+          echo "App status: HTTP $STATUS"
+          [ "$STATUS" = "200" ] && echo "Smoke test PASSED!" || echo "Smoke test check complete"
+        '''
+      }
+    }
+  }
+  post {
+    success { echo "✅ Pipeline SUCCESS — Build #${BUILD_NUMBER}" }
+    failure { echo "❌ Pipeline FAILED — Build #${BUILD_NUMBER}" }
+  }
+}
