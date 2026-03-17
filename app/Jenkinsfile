@@ -4,66 +4,92 @@ pipeline {
     string(name: 'DEPLOY_ENV', defaultValue: 'staging')
     string(name: 'branch', defaultValue: 'main')
   }
+  environment {
+    IMAGE = "ghangaon/deployiq-app"
+    REGISTRY_CRED = 'dockerhub-credentials'
+  }
   stages {
     stage('Checkout') {
       steps {
-        echo "Checking out branch: ${params.branch}"
-        sh 'git log --oneline -5 || true'
+        echo "=== STAGE 1: CHECKOUT ==="
+        echo "Branch: ${params.branch} | Env: ${params.DEPLOY_ENV}"
+        sh 'git log --oneline -3'
       }
     }
     stage('Build Docker Image') {
       steps {
-        sh '''
-          IMAGE=ghangaon/deployiq-app:${BUILD_NUMBER}
-          echo "Building: $IMAGE"
-          docker build -t $IMAGE .
-          docker tag $IMAGE ghangaon/deployiq-app:latest
-          echo "Build complete!"
+        echo "=== STAGE 2: BUILD DOCKER IMAGE ==="
+        sh """
+          docker build -t ${IMAGE}:${BUILD_NUMBER} .
+          docker tag ${IMAGE}:${BUILD_NUMBER} ${IMAGE}:latest
           docker images | grep deployiq-app
-        '''
+          echo "Built: ${IMAGE}:${BUILD_NUMBER}"
+        """
       }
     }
     stage('Security Scan') {
       steps {
-        sh '''
-          echo "Running Trivy security scan..."
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy image --exit-code 0 --severity HIGH,CRITICAL \
-            ghangaon/deployiq-app:latest || true
-          echo "Security scan complete!"
-        '''
+        echo "=== STAGE 3: TRIVY SECURITY SCAN ==="
+        sh """
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy image \
+            --exit-code 0 \
+            --severity HIGH,CRITICAL \
+            --no-progress \
+            ${IMAGE}:latest || true
+          echo "Security scan complete"
+        """
       }
     }
-    stage('Deploy to Staging') {
+    stage('Push to Docker Hub') {
       steps {
-        sh '''
-          echo "Deploying to staging..."
-          docker stop deployiq-app-staging || true
-          docker rm deployiq-app-staging || true
+        echo "=== STAGE 4: PUSH TO DOCKER HUB ==="
+        withCredentials([usernamePassword(
+          credentialsId: "${REGISTRY_CRED}",
+          usernameVariable: 'DOCKER_USER',
+          passwordVariable: 'DOCKER_PASS'
+        )]) {
+          sh """
+            echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
+            docker push ${IMAGE}:${BUILD_NUMBER}
+            docker push ${IMAGE}:latest
+            docker logout
+            echo "Pushed: ${IMAGE}:${BUILD_NUMBER}"
+          """
+        }
+      }
+    }
+    stage('Deploy Staging') {
+      steps {
+        echo "=== STAGE 5: DEPLOY TO STAGING ==="
+        sh """
+          docker stop deployiq-staging || true
+          docker rm deployiq-staging || true
           docker run -d \
-            --name deployiq-app-staging \
+            --name deployiq-staging \
             -p 8090:80 \
-            ghangaon/deployiq-app:latest
-          sleep 2
-          docker ps | grep deployiq-app
-          echo "Staging deployed on port 8090!"
-        '''
+            --restart unless-stopped \
+            ${IMAGE}:latest
+          sleep 3
+          STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8090)
+          echo "Staging live on port 8090 — HTTP \$STATUS"
+        """
       }
     }
     stage('Smoke Test') {
       steps {
-        sh '''
-          echo "Running smoke tests..."
-          sleep 2
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8090)
-          echo "App status: HTTP $STATUS"
-          [ "$STATUS" = "200" ] && echo "Smoke test PASSED!" || echo "Smoke test check complete"
-        '''
+        echo "=== STAGE 6: SMOKE TEST ==="
+        sh """
+          HTTP=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8090)
+          echo "App response: HTTP \$HTTP"
+          [ "\$HTTP" = "200" ] && echo "Smoke test PASSED!" || echo "App returned HTTP \$HTTP"
+        """
       }
     }
   }
   post {
-    success { echo "✅ Pipeline SUCCESS — Build #${BUILD_NUMBER}" }
-    failure { echo "❌ Pipeline FAILED — Build #${BUILD_NUMBER}" }
+    success { echo "PIPELINE SUCCESS — ${IMAGE}:${BUILD_NUMBER} deployed to staging!" }
+    failure { echo "PIPELINE FAILED — check logs above" }
   }
 }
